@@ -1,7 +1,8 @@
 import os
 import numpy as np
-from torch.utils.data import Dataset
 import torch
+import torch.nn.functional as F
+from torch.utils.data import Dataset
 from monai.transforms import Compose, RandFlipd, RandRotate90d, RandZoomd, RandScaleIntensityd, RandGaussianNoised
 
 class npy_dataset(Dataset):
@@ -36,3 +37,23 @@ class npy_dataset(Dataset):
         mask = torch.tensor(mask, dtype=torch.float32)
 
         return image, mask
+
+def compute_class_weights(data_loader, num_classes, include_background, device):
+    all_counts = torch.zeros(num_classes, dtype=torch.float)
+    
+    for _, mask in data_loader:
+        class_indices = torch.argmax(mask, dim=1) # converts one-hot to class indices, (b, num_classes, d, h, w) to (b, d, h, w)
+        counts = torch.bincount(class_indices.flatten(), minlength=num_classes)
+        all_counts += counts.float()
+    
+    class_counts = all_counts if include_background else all_counts[1:]
+    class_counts = torch.clamp(class_counts, min=1.0) # prevent division by 0 in case a class has 0 pixels
+
+    class_weights = class_counts.sum() / (len(class_counts) * class_counts)
+    
+    return class_weights.to(device)
+
+def one_hot_from_logits(logits, num_classes):
+    labels = torch.argmax(logits, dim=1)
+    one_hot = F.one_hot(labels, num_classes=num_classes).permute(0, 4, 1, 2, 3).float()
+    return one_hot

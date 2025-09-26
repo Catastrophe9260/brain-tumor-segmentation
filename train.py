@@ -1,14 +1,13 @@
 import os
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
-from monai.losses import DiceLoss # 1 - (2 * |P ∩ T|) / (|P| + |T|), checks overlap and isn't biased by background
+from monai.losses import DiceFocalLoss
 import mlflow
 import mlflow.pytorch
 from mlflow import log_param, log_artifacts, log_metric
 
 from model import ResAtt3DUNet
-from utils import npy_dataset
+from utils import npy_dataset, compute_class_weights
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -16,10 +15,11 @@ def main():
 
     print("starting train loop...")
 
-    with mlflow.start_run(run_name="brainseg_1"):
+    with mlflow.start_run(run_name="brainseg_train"):
 
         # hyperparameters
         use_data_aug = True
+        shuffle = True
         in_ch = 3
         out_ch = 4
         num_filters = 32
@@ -30,12 +30,17 @@ def main():
         lr = 1e-4
         sched_factor = 0.5
         sched_patience = 20
+        use_background = False
+        gamma = 2.0
+        l_dice = 1.0
+        l_focal = 1.0
         num_epochs = 250
         log_every = 25
 
         # log hyperparameters and model information
         log_param("dataset", "BraTS2020")
         log_param("data_augmentation", use_data_aug)
+        log_param("shuffle", shuffle)
         log_param("model", "ResAtt3DUNet")
         log_param("in_channels", in_ch)
         log_param("out_channels", out_ch)
@@ -48,11 +53,15 @@ def main():
         log_param("learning_rate", lr)
         log_param("scheduling_factor", sched_factor)
         log_param("scheduling_patience", sched_patience)
-        log_param("loss_function", "DiceLoss + CrossEntropyLoss")
+        log_param("loss_function", "DiceFocalLoss")
+        log_param("include_background", use_background)
+        log_param("gamma", gamma)
+        log_param("lambda_dice", l_dice)
+        log_param("lambda_focal", l_focal)
         log_param("num_epochs", num_epochs)
 
         # data setup
-        data_dir = '/home/omkos333/projects/brain_tumor_seg/data/processed'
+        data_dir = '/home/omkos333/projects/brainseg/data/processed'
 
         train_ds = npy_dataset(
             os.path.join(data_dir, 'train', 'images'),
@@ -60,7 +69,7 @@ def main():
             data_augmentation=use_data_aug
         )
 
-        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=shuffle)
 
         # model setup
         model = ResAtt3DUNet(
@@ -78,10 +87,11 @@ def main():
         )
 
         # loss function
-        class_weights = torch.Tensor([0.1, 1.0, 1.0, 1.0]).to(device) # reduce importance of background
+        class_weights = compute_class_weights(train_loader, out_ch, use_background, device)
 
-        loss_fn = lambda logits, targets: (
-            DiceLoss()(logits, targets) + nn.CrossEntropyLoss(weight=class_weights)(logits, torch.argmax(targets, dim=1))
+        loss_fn = DiceFocalLoss(
+            include_background=use_background, to_onehot_y=False, softmax=True, # our masks are already one-hot
+            gamma=gamma, weight=class_weights, lambda_dice=l_dice, lambda_focal=l_focal
         )
 
         # training loop
@@ -91,10 +101,10 @@ def main():
             epoch_loss = 0
             num_batches = 0
 
-            for img, true_mask in train_loader:
-                img, true_mask = img.to(device), true_mask.to(device)
+            for image, true_mask in train_loader:
+                image, true_mask = image.to(device), true_mask.to(device)
 
-                logits = model(img)
+                logits = model(image)
                 loss = loss_fn(logits, true_mask)
 
                 optimizer.zero_grad()
@@ -119,14 +129,14 @@ def main():
                 mlflow.pytorch.log_model(model, name=f"epoch_{epoch}_model")
                 log_artifacts(f'epoch_{epoch}_weights.pt', artifact_path="model_weights")
 
-        # save final model weights
+        # save and log final model weights
         torch.save(model.state_dict(), 'final_weights.pt')
-        
-        # log final model
-        mlflow.pytorch.log_model(model, name="final_model")
         log_artifacts('final_weights.pt', artifact_path="model_weights")
 
-        print("done")
+        # log final model
+        mlflow.pytorch.log_model(model, name="final_model")
+
+    print("done")
 
 if __name__ == "__main__":
     main()

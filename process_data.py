@@ -8,8 +8,8 @@ from sklearn.model_selection import train_test_split
 print("processing data...")
 
 # directory setup
-data_dir = '/home/omkos333/projects/brain_tumor_seg/data/raw' # base data directory
-save_dir = '/home/omkos333/projects/brain_tumor_seg/data/processed' # new folder to save to
+data_dir = '/home/omkos333/projects/brainseg/data/raw' # base data directory
+save_dir = '/home/omkos333/projects/brainseg/data/processed' # new folder to save to
 
 for sub_path in ("train/images", "train/masks", "test/images", "test/masks"):
     os.makedirs(os.path.join(save_dir, sub_path), exist_ok=True)
@@ -20,7 +20,7 @@ t1ce_list = sorted(os.path.normpath(i) for i in glob.glob(data_dir + '/BraTS20_T
 t2_list = sorted(os.path.normpath(i) for i in glob.glob(data_dir + '/BraTS20_Training_*/BraTS20_Training_*_t2.nii'))
 mask_list = sorted(os.path.normpath(i) for i in glob.glob(data_dir + '/BraTS20_Training_*/BraTS20_Training_*_seg.nii'))
 
-# convert a (D, H, W) integer mask to one-hot (D, H, W, num_classes)
+# convert a (d, h, w) integer mask to one-hot (d, h, w, num_classes)
 def to_one_hot(mask, num_classes):
     shape = mask.shape
     one_hot = np.zeros(shape + (num_classes,), dtype=np.uint8)
@@ -28,11 +28,12 @@ def to_one_hot(mask, num_classes):
         one_hot[..., c] = (mask == c).astype(np.uint8)
     return one_hot
 
-# 80/20 train/test split
+# train/test split
 N = len(flair_list)
-train_idx, test_idx = train_test_split(np.arange(N), test_size=0.2, random_state=42)
+train_size, test_size = 0.8, 0.2
+train_idx, test_idx = train_test_split(np.arange(N), train_size=train_size, test_size=test_size, random_state=42)
 
-# data preprocessing loop
+# data processing loop
 scaler = MinMaxScaler() # used to scale all voxels to [0, 1]
 
 for image in range(N): # the length of all scan-specific filepath lists is the same
@@ -62,7 +63,7 @@ for image in range(N): # the length of all scan-specific filepath lists is the s
     stack = np.transpose(stack, (3, 0, 1, 2)) # channels first, (3, 64, 64, 64)
     mask = np.transpose(mask, (3, 0, 1, 2)) # (4, 64, 64, 64)
     
-    train_idx = set(train_idx) # faster lookup in O(1) with a set
+    train_idx = set(train_idx) # fast O(1) lookup with a set
     sub_path = "train" if image in train_idx else "test"
 
     image_dir = os.path.join(save_dir, sub_path, "images")
