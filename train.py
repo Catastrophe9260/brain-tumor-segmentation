@@ -1,5 +1,6 @@
 import os
 import torch
+from torch.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 from monai.losses import DiceFocalLoss
 import mlflow
@@ -9,7 +10,8 @@ from mlflow import log_param, log_artifacts, log_metric
 from model import ResAtt3DUNet
 from utils import npy_dataset, compute_class_weights
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = torch.device(device_str)
 
 def main():
 
@@ -28,16 +30,17 @@ def main():
         dropout_prob = 0.2
         batch_size = 2
         lr = 1e-4
-        sched_factor = 0.5
-        sched_patience = 20
+        betas = (0.9, 0.999)
+        weight_decay = 1e-4
+        sched_min_lr = 1e-6
         use_background = False
-        gamma = 2.0
+        gamma = 3.0
         l_dice = 1.0
-        l_focal = 1.0
-        num_epochs = 250
+        l_focal = 2.0
+        num_epochs = 400
         log_every = 25
 
-        # log hyperparameters and model information
+        # log data/model information and hyperparameters
         log_param("dataset", "BraTS2020")
         log_param("data_augmentation", use_data_aug)
         log_param("shuffle", shuffle)
@@ -49,10 +52,11 @@ def main():
         log_param("dropout", use_dropout)
         log_param("dropout_probability", dropout_prob)
         log_param("batch_size", batch_size)
-        log_param("optimizer", "Adam")
+        log_param("optimizer", "AdamW")
         log_param("learning_rate", lr)
-        log_param("scheduling_factor", sched_factor)
-        log_param("scheduling_patience", sched_patience)
+        log_param("betas", betas)
+        log_param("weight_decay", weight_decay)
+        log_param("scheduler_min_learning_rate", sched_min_lr)  
         log_param("loss_function", "DiceFocalLoss")
         log_param("include_background", use_background)
         log_param("gamma", gamma)
@@ -78,13 +82,13 @@ def main():
         )
         
         model = model.to(device)
+
+        scaler = GradScaler(device_str) # for mixed precision training
         
         # optimizer with a learning rate scheduler
-        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=lr, betas=betas, weight_decay=weight_decay)
 
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=sched_factor, patience=sched_patience
-        )
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=sched_min_lr)
 
         # loss function
         class_weights = compute_class_weights(train_loader, out_ch, use_background, device)
@@ -104,12 +108,14 @@ def main():
             for image, true_mask in train_loader:
                 image, true_mask = image.to(device), true_mask.to(device)
 
-                logits = model(image)
-                loss = loss_fn(logits, true_mask)
+                with autocast(device_str):
+                    logits = model(image)
+                    loss = loss_fn(logits, true_mask)
 
                 optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
 
                 epoch_loss += loss.item()
                 num_batches += 1
@@ -122,7 +128,7 @@ def main():
 
             print(f"epoch {epoch}, loss: {avg_loss:.4f}, lr: {optimizer.param_groups[0]['lr']:.6f}")
 
-            scheduler.step(avg_loss)
+            scheduler.step()
 
             # log model periodically
             if epoch % log_every == 0:

@@ -1,5 +1,6 @@
 import os
 import torch
+from torch.amp import autocast
 from torch.utils.data import DataLoader
 from monai.metrics import DiceMetric, HausdorffDistanceMetric
 import mlflow
@@ -9,7 +10,8 @@ from mlflow import log_param, log_metric
 from model import ResAtt3DUNet
 from utils import npy_dataset, one_hot_from_logits
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = torch.device(device_str)
 
 def main():
 
@@ -22,9 +24,9 @@ def main():
         out_ch = 4
         num_filters = 32
         num_heads = 2
-        batch_size = 1
+        batch_size = 2
 
-        # log hyperparameters and model information
+        # log data/model information and hyperparameters
         log_param("dataset", "BraTS2020")
         log_param("model", "ResAtt3DUNet")
         log_param("in_channels", in_ch)
@@ -65,8 +67,9 @@ def main():
             for image, true_mask in test_loader:
                 image, true_mask = image.to(device), true_mask.to(device)
 
-                logits = model(image)
-                pred_mask = one_hot_from_logits(logits, out_ch)
+                with autocast(device_str):
+                    logits = model(image)
+                    pred_mask = one_hot_from_logits(logits, out_ch)
 
                 mean_dice_metric(pred_mask, true_mask)
                 mean_hd95_metric(pred_mask, true_mask)
@@ -80,8 +83,8 @@ def main():
         mean_hd95_metric.reset()
 
         # log metrics
-        mlflow.log_metric("mean_dice_score", mean_dice_score)
-        mlflow.log_metric("mean_hd95", mean_hd95)
+        log_metric("mean_dice_score", mean_dice_score)
+        log_metric("mean_hd95", mean_hd95)
 
     print("done")
     
