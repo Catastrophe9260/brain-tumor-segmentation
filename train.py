@@ -24,8 +24,8 @@ def main():
         shuffle = True
         in_ch = 3
         out_ch = 4
-        num_filters = 32
-        num_heads = 2
+        num_filters = 64
+        num_heads = 4
         use_dropout = True
         dropout_prob = 0.2
         batch_size = 2
@@ -34,9 +34,9 @@ def main():
         weight_decay = 1e-4
         sched_min_lr = 1e-6
         use_background = False
-        gamma = 3.0
+        gamma = 2.0
         l_dice = 1.0
-        l_focal = 2.0
+        l_focal = 1.0
         num_epochs = 400
         log_every = 25
 
