@@ -8,6 +8,7 @@ import mlflow.pytorch
 from mlflow import log_param, log_metric
 
 from model import ResAtt3DUNet
+from hyperparameters import BATCH_SIZE, IN_CH, OUT_CH, NUM_FILTERS, NUM_HEADS
 from utils import npy_dataset, one_hot_from_logits
 
 device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -20,20 +21,20 @@ def main():
     with mlflow.start_run(run_name="brainseg_test"):
 
         # hyperparameters
-        in_ch = 3
-        out_ch = 4
-        num_filters = 32
-        num_heads = 2
-        batch_size = 2
+        batch_size = BATCH_SIZE
+        in_ch = IN_CH
+        out_ch = OUT_CH
+        num_filters = NUM_FILTERS
+        num_heads = NUM_HEADS
 
         # log data/model information and hyperparameters
         log_param("dataset", "BraTS2020")
+        log_param("batch_size", batch_size)
         log_param("model", "ResAtt3DUNet")
         log_param("in_channels", in_ch)
         log_param("out_channels", out_ch)
         log_param("num_filters", num_filters)
         log_param("num_heads", num_heads)
-        log_param("batch_size", batch_size)
 
         # data setup
         data_dir = '/home/omkos333/projects/brainseg/data/processed'
@@ -48,8 +49,7 @@ def main():
 
         # model setup
         model = ResAtt3DUNet(
-            in_channels=in_ch, out_channels=out_ch, num_filters=num_filters, num_heads=num_heads,
-            dropout=False, dropout_probability=0.0
+            in_channels=in_ch, out_channels=out_ch, num_filters=num_filters, num_heads=num_heads, dropout=False
         )
 
         model.load_state_dict(torch.load('final_weights.pt', map_location=device))

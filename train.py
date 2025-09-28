@@ -8,6 +8,14 @@ import mlflow.pytorch
 from mlflow import log_param, log_artifacts, log_metric
 
 from model import ResAtt3DUNet
+from hyperparameters import (
+    USE_DATA_AUG, BATCH_SIZE, SHUFFLE,
+    IN_CH, OUT_CH, NUM_FILTERS, NUM_HEADS, USE_DROPOUT, DROPOUT_PROB,
+    LR, BETAS, WEIGHT_DECAY, 
+    SCHED_MIN_LR,
+    USE_BACKGROUND, GAMMA, L_DICE, L_FOCAL,
+    NUM_EPOCHS, LOG_EVERY
+)
 from utils import npy_dataset, compute_class_weights
 
 device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -20,29 +28,30 @@ def main():
     with mlflow.start_run(run_name="brainseg_train"):
 
         # hyperparameters
-        use_data_aug = True
-        shuffle = True
-        in_ch = 3
-        out_ch = 4
-        num_filters = 64
-        num_heads = 4
-        use_dropout = True
-        dropout_prob = 0.2
-        batch_size = 2
-        lr = 1e-4
-        betas = (0.9, 0.999)
-        weight_decay = 1e-4
-        sched_min_lr = 1e-6
-        use_background = False
-        gamma = 2.0
-        l_dice = 1.0
-        l_focal = 1.0
-        num_epochs = 400
-        log_every = 25
+        use_data_aug = USE_DATA_AUG
+        batch_size = BATCH_SIZE
+        shuffle = SHUFFLE
+        in_ch = IN_CH
+        out_ch = OUT_CH
+        num_filters = NUM_FILTERS
+        num_heads = NUM_HEADS
+        use_dropout = USE_DROPOUT
+        dropout_prob = DROPOUT_PROB
+        lr = LR
+        betas = BETAS
+        weight_decay = WEIGHT_DECAY
+        sched_min_lr = SCHED_MIN_LR
+        use_background = USE_BACKGROUND
+        gamma = GAMMA
+        l_dice = L_DICE
+        l_focal = L_FOCAL
+        num_epochs = NUM_EPOCHS
+        log_every = LOG_EVERY
 
         # log data/model information and hyperparameters
         log_param("dataset", "BraTS2020")
         log_param("data_augmentation", use_data_aug)
+        log_param("batch_size", batch_size)
         log_param("shuffle", shuffle)
         log_param("model", "ResAtt3DUNet")
         log_param("in_channels", in_ch)
@@ -51,7 +60,6 @@ def main():
         log_param("num_heads", num_heads)
         log_param("dropout", use_dropout)
         log_param("dropout_probability", dropout_prob)
-        log_param("batch_size", batch_size)
         log_param("optimizer", "AdamW")
         log_param("learning_rate", lr)
         log_param("betas", betas)

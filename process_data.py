@@ -5,6 +5,8 @@ import nibabel as nib
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 
+from hyperparameters import TRAIN_SIZE, TEST_SIZE
+
 print("processing data...")
 
 # directory setup
@@ -30,7 +32,7 @@ def to_one_hot(mask, num_classes):
 
 # train/test split
 N = len(flair_list)
-train_size, test_size = 0.8, 0.2
+train_size, test_size = TRAIN_SIZE, TEST_SIZE
 train_idx, test_idx = train_test_split(np.arange(N), train_size=train_size, test_size=test_size, random_state=42)
 
 # data processing loop
