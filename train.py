@@ -3,7 +3,7 @@ import torch
 from torch.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 from monai.losses import DiceFocalLoss
-import wandb
+import mlflow
 
 from model import ResAtt3DUNet
 from hyperparameters import (
@@ -15,8 +15,6 @@ from hyperparameters import (
     NUM_EPOCHS, LOG_EVERY
 )
 from utils import npy_dataset, compute_class_weights
-
-os.environ["WANDB_BASE_URL"] = "http://localhost:8080" # simple, local logging
 
 device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
 device = torch.device(device_str)
@@ -46,11 +44,11 @@ def main():
     num_epochs = NUM_EPOCHS
     log_every = LOG_EVERY
 
-    wandb.init(
-        project="brainseg",
-        name="brainseg_train",
-        entity="omkos333",
-        config={
+    # experiment setup
+    mlflow.set_experiment("brainseg")
+    mlflow.start_run(run_name="brainseg_train")
+    mlflow.log_params(
+        {
             "dataset": "BraTS2020",
             "data_augmentation": use_data_aug,
             "batch_size": batch_size,
@@ -97,7 +95,7 @@ def main():
 
     scaler = GradScaler(device_str) # for mixed precision training
     
-    # optimizer with a learning rate scheduler
+    # optimizer setup (with a learning rate scheduler)
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, betas=betas, weight_decay=weight_decay)
 
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=sched_min_lr)
@@ -135,11 +133,11 @@ def main():
         avg_loss = epoch_loss / num_batches
 
         # log per-epoch metrics
-        wandb.log(
-            data={
+        mlflow.log_metrics(
+            {
                 "train_loss": avg_loss,
                 "scheduled_learning_rate": optimizer.param_groups[0]['lr']
-            },
+            }, 
             step=epoch
         )
 
@@ -151,11 +149,13 @@ def main():
         if epoch % log_every == 0:
             weights_path = f'epoch_{epoch}_weights.pt'
             torch.save(model.state_dict(), weights_path)
-            wandb.log_artifact(weights_path, name=f"epoch_{epoch}_model", type="model")
+            mlflow.log_artifact(weights_path)
 
     # save and log final model weights
     torch.save(model.state_dict(), 'final_weights.pt')
-    wandb.log_artifact('final_weights.pt', name="final_model", type="model")
+    mlflow.log_artifact('final_weights.pt')
+
+    mlflow.end_run()
 
     print("done")
 

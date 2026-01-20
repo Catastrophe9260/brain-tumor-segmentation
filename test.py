@@ -3,13 +3,11 @@ import torch
 from torch.amp import autocast
 from torch.utils.data import DataLoader
 from monai.metrics import DiceMetric, HausdorffDistanceMetric
-import wandb
+import mlflow
 
 from model import ResAtt3DUNet
 from hyperparameters import BATCH_SIZE, IN_CH, OUT_CH, NUM_FILTERS, NUM_HEADS
 from utils import npy_dataset, one_hot_from_logits
-
-os.environ["WANDB_BASE_URL"] = "http://localhost:8080" # simple, local logging
 
 device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
 device = torch.device(device_str)
@@ -25,11 +23,11 @@ def main():
     num_filters = NUM_FILTERS
     num_heads = NUM_HEADS
 
-    wandb.init(
-        project="brainseg",
-        name="brainseg_test",
-        entity="omkos333",
-        config={
+    # experiment setup
+    mlflow.set_experiment("brainseg")
+    mlflow.start_run(run_name="brainseg_test")
+    mlflow.log_params(
+        {
             "dataset": "BraTS2020",
             "batch_size": batch_size,
             "model": "ResAtt3DUNet",
@@ -59,7 +57,7 @@ def main():
     model.to(device)
 
     model.load_state_dict(torch.load('final_weights.pt', map_location=device))
-    wandb.log_artifact('final_weights.pt', name="test_model", type="model")
+    mlflow.log_artifact('final_weights.pt')
 
     # define metrics
     mean_dice_metric = DiceMetric(include_background=False, reduction="mean")
@@ -88,12 +86,14 @@ def main():
     mean_hd95_metric.reset()
 
     # log metrics
-    wandb.log(
-        data={
+    mlflow.log_metrics(
+        {
             "mean_dice_score": mean_dice_score,
             "mean_hd95": mean_hd95
         }
     )
+
+    mlflow.end_run()
 
     print("done")
     
