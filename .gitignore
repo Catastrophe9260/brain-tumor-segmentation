@@ -10,5 +10,5 @@ __pycache__/
 *.log
 .ipynb_checkpoints/
 data/
-mlruns/
+wandb/
 *.pt

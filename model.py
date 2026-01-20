@@ -1,18 +1,17 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 # a residual 3D convolution block
 class ConvBlock3D(nn.Module):
-    def __init__(self, in_channels, out_channels, dropout, dropout_probability):
+    def __init__(self, in_channels, out_channels, dropout=False, dropout_probability=0.2):
         super().__init__()
         self.block = nn.Sequential(
             nn.Conv3d(in_channels, out_channels, kernel_size=3, padding=1),
-            nn.InstanceNorm3d(out_channels),
-            nn.LeakyReLU(inplace=True),
+            nn.GroupNorm(num_groups=min(8, out_channels), num_channels=out_channels),
+            nn.LeakyReLU(),
             nn.Conv3d(out_channels, out_channels, kernel_size=3, padding=1),
-            nn.InstanceNorm3d(out_channels),
-            nn.LeakyReLU(inplace=True)
+            nn.GroupNorm(num_groups=min(8, out_channels), num_channels=out_channels),
+            nn.LeakyReLU()
         )
 
         self.residual = nn.Conv3d(in_channels, out_channels, kernel_size=1) if in_channels != out_channels else nn.Identity()
@@ -32,12 +31,12 @@ class AttentionGate3D(nn.Module):
         super().__init__()
         self.W_enc = nn.Sequential(
             nn.Conv3d(in_channels_enc, latent_channels, kernel_size=1, bias=False),
-            nn.InstanceNorm3d(latent_channels)
+            nn.GroupNorm(num_groups=min(8, latent_channels), num_channels=latent_channels)
         )
 
         self.W_dec = nn.Sequential(
             nn.Conv3d(in_channels_dec, latent_channels, kernel_size=1, bias=False),
-            nn.InstanceNorm3d(latent_channels)
+            nn.GroupNorm(num_groups=min(8, latent_channels), num_channels=latent_channels)
         )
 
         self.attention = nn.Sequential(
@@ -45,7 +44,7 @@ class AttentionGate3D(nn.Module):
             nn.Sigmoid()
         )
 
-        self.leaky_relu = nn.LeakyReLU(inplace=True)
+        self.leaky_relu = nn.LeakyReLU()
 
     def forward(self, enc, dec):
         enc_latent = self.W_enc(enc)
@@ -65,12 +64,12 @@ class CrossAttention3D(nn.Module):
         self.n_lc_per_h = latent_channels // num_heads
 
         # projections to token latent space
-        self.q_proj = nn.Conv3d(in_channels_dec, latent_channels, kernel_size=1, bias=False)
         self.k_proj = nn.Conv3d(in_channels_enc, latent_channels, kernel_size=1, bias=False)
+        self.q_proj = nn.Conv3d(in_channels_dec, latent_channels, kernel_size=1, bias=False)
         self.v_proj = nn.Conv3d(in_channels_enc, latent_channels, kernel_size=1, bias=False)
 
-        self.norm_q = nn.LayerNorm(latent_channels)
         self.norm_k = nn.LayerNorm(latent_channels)
+        self.norm_q = nn.LayerNorm(latent_channels)
         self.norm_v = nn.LayerNorm(latent_channels)
 
         self.out_proj = nn.Conv3d(latent_channels, in_channels_dec, kernel_size=1, bias=False)
@@ -97,20 +96,20 @@ class CrossAttention3D(nn.Module):
         return att_heads
 
     def forward(self, enc, dec):
-        q = self.q_proj(dec)
         k = self.k_proj(enc)
+        q = self.q_proj(dec)
         v = self.v_proj(enc)
 
-        q_t, _ = self._to_tokens(q)
         k_t, _ = self._to_tokens(k)
+        q_t, _ = self._to_tokens(q)
         v_t, _ = self._to_tokens(v)
 
-        q_t = self.norm_q(q_t)
         k_t = self.norm_k(k_t)
+        q_t = self.norm_q(q_t)
         v_t = self.norm_v(v_t)
 
-        q_h = self._split_heads(q_t)
         k_h = self._split_heads(k_t)
+        q_h = self._split_heads(q_t)
         v_h = self._split_heads(v_t)
 
         # scaled dot-product attention
@@ -129,11 +128,11 @@ class CrossAttention3D(nn.Module):
 
 # a 3D deconvolution and skip block with an attention gate
 class UpBlock3D_AG(nn.Module):
-    def __init__(self, in_channels, out_channels, latent_channels, dropout, dropout_probability):
+    def __init__(self, skip_channels, out_channels, latent_channels, dropout, dropout_probability):
         super().__init__()
-        self.att_gate = AttentionGate3D(in_channels, in_channels, latent_channels)
-        self.conv = ConvBlock3D(in_channels * 2, in_channels, dropout=dropout, dropout_probability=dropout_probability)
-        self.up = nn.ConvTranspose3d(in_channels, out_channels, kernel_size=2, stride=2) # deconvolution (upsampling)
+        self.att_gate = AttentionGate3D(skip_channels, skip_channels, latent_channels)
+        self.conv = ConvBlock3D(skip_channels * 2, skip_channels, dropout=dropout, dropout_probability=dropout_probability)
+        self.up = nn.ConvTranspose3d(skip_channels, out_channels, kernel_size=2, stride=2) # deconvolution (upsampling)
 
     def forward(self, x, skip=None):
         if skip is None:
@@ -149,22 +148,22 @@ class UpBlock3D_AG(nn.Module):
                                   diffZ // 2, diffZ - diffZ // 2])
         
         enc_ctx = self.att_gate(skip, x) # apply attention gating to encoder features
-        x = torch.cat((enc_ctx, x), dim=1) # concatenate contextualized encoder and decoder features
+        x = torch.cat((enc_ctx, x), dim=1) # concatenate contextualized encoder and raw decoder features
         x = self.conv(x) # learn a transformation that condenses them
 
         return self.up(x)
 
 # a 3D deconvolution and skip block with cross attention
 class UpBlock3D_CA(nn.Module):
-    def __init__(self, in_channels, out_channels, latent_channels, num_heads, dropout, dropout_probability):
+    def __init__(self, skip_channels, out_channels, latent_channels, num_heads, dropout, dropout_probability):
         super().__init__()
         self.cross_att = CrossAttention3D(
-            in_channels, in_channels, latent_channels,
+            skip_channels, skip_channels, latent_channels,
             num_heads=num_heads, dropout=dropout, dropout_probability=dropout_probability
         )
 
-        self.conv = ConvBlock3D(in_channels * 2, in_channels, dropout=dropout, dropout_probability=dropout_probability)
-        self.up = nn.ConvTranspose3d(in_channels, out_channels, kernel_size=2, stride=2) # deconvolution (upsampling)
+        self.conv = ConvBlock3D(skip_channels * 2, skip_channels, dropout=dropout, dropout_probability=dropout_probability)
+        self.up = nn.ConvTranspose3d(skip_channels, out_channels, kernel_size=2, stride=2) # deconvolution (upsampling)
 
     def forward(self, x, skip=None):
         if skip is None:
@@ -179,8 +178,8 @@ class UpBlock3D_CA(nn.Module):
                                   diffY // 2, diffY - diffY // 2,
                                   diffZ // 2, diffZ - diffZ // 2])
         
-        dec_ctx = self.cross_att(skip, x) # apply cross attention to decoder features
-        x = torch.cat((skip, dec_ctx), dim=1) # concatenate encoder and contextualized decoder features
+        enc_ctx = self.cross_att(skip, x) # apply cross attention to decoder features
+        x = torch.cat((enc_ctx, x), dim=1) # concatenate contextualized encoder and raw decoder features
         x = self.conv(x)
 
         return self.up(x)

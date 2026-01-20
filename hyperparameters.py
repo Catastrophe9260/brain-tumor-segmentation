@@ -23,7 +23,7 @@ SCHED_MIN_LR = 1e-6
 
 # loss hyperparameters
 USE_BACKGROUND = False
-GAMMA = 2.0
+GAMMA = 1.0
 L_DICE = 1.0
 L_FOCAL = 1.0
 
