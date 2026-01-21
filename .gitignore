@@ -10,5 +10,6 @@ __pycache__/
 *.log
 .ipynb_checkpoints/
 data/
-wandb/
+mlruns/
+weights/
 *.pt

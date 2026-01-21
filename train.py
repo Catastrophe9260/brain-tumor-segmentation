@@ -90,7 +90,7 @@ def main():
         in_channels=in_ch, out_channels=out_ch, num_filters=num_filters, num_heads=num_heads,
         dropout=use_dropout, dropout_probability=dropout_prob
     )
-    
+        
     model.to(device)
 
     scaler = GradScaler(device_str) # for mixed precision training
@@ -107,6 +107,9 @@ def main():
         include_background=use_background, to_onehot_y=False, softmax=True, # our masks are already one-hot
         gamma=gamma, weight=class_weights, lambda_dice=l_dice, lambda_focal=l_focal
     )
+
+    # create a weights directory
+    os.makedirs('weights', exist_ok=True)
 
     # training loop
     for epoch in range(1, num_epochs + 1):
@@ -147,13 +150,13 @@ def main():
 
         # log model periodically
         if epoch % log_every == 0:
-            weights_path = f'epoch_{epoch}_weights.pt'
+            weights_path = f'weights/epoch_{epoch}_weights.pt'
             torch.save(model.state_dict(), weights_path)
             mlflow.log_artifact(weights_path)
 
     # save and log final model weights
-    torch.save(model.state_dict(), 'final_weights.pt')
-    mlflow.log_artifact('final_weights.pt')
+    torch.save(model.state_dict(), 'weights/final_weights.pt')
+    mlflow.log_artifact('weights/final_weights.pt')
 
     mlflow.end_run()
 
