@@ -1,6 +1,8 @@
 # data hyperparameters
-TRAIN_SIZE = 0.8
-TEST_SIZE = 0.2
+TRAIN_SIZE = 0.7
+VAL_SIZE = 0.15
+TEST_SIZE = 0.15
+NUM_WORKERS = 4
 USE_DATA_AUG = True
 BATCH_SIZE = 2
 SHUFFLE = True

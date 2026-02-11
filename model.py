@@ -128,64 +128,55 @@ class CrossAttention3D(nn.Module):
 
 # a 3D deconvolution and skip block with an attention gate
 class UpBlock3D_AG(nn.Module):
-    def __init__(self, skip_channels, out_channels, latent_channels, dropout, dropout_probability):
+    def __init__(self, in_channels, skip_channels, latent_channels, dropout, dropout_probability):
         super().__init__()
+        self.up = nn.ConvTranspose3d(in_channels, skip_channels, kernel_size=2, stride=2)
         self.att_gate = AttentionGate3D(skip_channels, skip_channels, latent_channels)
         self.conv = ConvBlock3D(skip_channels * 2, skip_channels, dropout=dropout, dropout_probability=dropout_probability)
-        self.up = nn.ConvTranspose3d(skip_channels, out_channels, kernel_size=2, stride=2) # deconvolution (upsampling)
 
     def forward(self, x, skip=None):
-        if skip is None:
-            return self.up(x)
+        x = self.up(x)
 
-        # padding for size mismatches
         diffX = skip.size(4) - x.size(4)
         diffY = skip.size(3) - x.size(3)
         diffZ = skip.size(2) - x.size(2)
-
         x = nn.functional.pad(x, [diffX // 2, diffX - diffX // 2,
                                   diffY // 2, diffY - diffY // 2,
                                   diffZ // 2, diffZ - diffZ // 2])
-        
+
         enc_ctx = self.att_gate(skip, x) # apply attention gating to encoder features
         x = torch.cat((enc_ctx, x), dim=1) # concatenate contextualized encoder and raw decoder features
-        x = self.conv(x) # learn a transformation that condenses them
 
-        return self.up(x)
+        return self.conv(x) # learn a transformation that condenses them
 
 # a 3D deconvolution and skip block with cross attention
 class UpBlock3D_CA(nn.Module):
-    def __init__(self, skip_channels, out_channels, latent_channels, num_heads, dropout, dropout_probability):
+    def __init__(self, in_channels, skip_channels, latent_channels, num_heads, dropout, dropout_probability):
         super().__init__()
+        self.up = nn.ConvTranspose3d(in_channels, skip_channels, kernel_size=2, stride=2)
         self.cross_att = CrossAttention3D(
             skip_channels, skip_channels, latent_channels,
             num_heads=num_heads, dropout=dropout, dropout_probability=dropout_probability
         )
-
         self.conv = ConvBlock3D(skip_channels * 2, skip_channels, dropout=dropout, dropout_probability=dropout_probability)
-        self.up = nn.ConvTranspose3d(skip_channels, out_channels, kernel_size=2, stride=2) # deconvolution (upsampling)
 
-    def forward(self, x, skip=None):
-        if skip is None:
-            return self.up(x)
+    def forward(self, x, skip):
+        x = self.up(x)
 
-        # padding for size mismatches
         diffX = skip.size(4) - x.size(4)
         diffY = skip.size(3) - x.size(3)
         diffZ = skip.size(2) - x.size(2)
-
         x = nn.functional.pad(x, [diffX // 2, diffX - diffX // 2,
                                   diffY // 2, diffY - diffY // 2,
                                   diffZ // 2, diffZ - diffZ // 2])
-        
+
         enc_ctx = self.cross_att(skip, x) # apply cross attention to decoder features
         x = torch.cat((enc_ctx, x), dim=1) # concatenate contextualized encoder and raw decoder features
-        x = self.conv(x)
 
-        return self.up(x)
+        return self.conv(x)
 
-# a residual 3D unet with multiple types of attention
-class ResAtt3DUNet(nn.Module):
+# a 3D unet with multiple types of attention
+class Att3DUNet(nn.Module):
     def __init__(self, in_channels=3, out_channels=4, num_filters=32, num_heads=2, dropout=False, dropout_probability=0.2):
         super().__init__()
         f = num_filters
@@ -219,10 +210,10 @@ class ResAtt3DUNet(nn.Module):
         b = self.bottleneck(self.pool(e3))
 
         # decoder path
-        d3 = self.dec3(b)
-        d2 = self.dec2(d3, e3)
-        d1 = self.dec1(d2, e2)
-        d0 = self.dec0(d1, e1)
+        d3 = self.dec3(b, e3)
+        d2 = self.dec2(d3, e2)
+        d1 = self.dec1(d2, e1)
+        d0 = self.dec0(d1, e0)
 
         # padding for size mismatches
         diffX = e0.size(4) - d0.size(4)

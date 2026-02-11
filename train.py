@@ -5,9 +5,9 @@ from torch.utils.data import DataLoader
 from monai.losses import DiceFocalLoss
 import mlflow
 
-from model import ResAtt3DUNet
+from model import Att3DUNet
 from hyperparameters import (
-    USE_DATA_AUG, BATCH_SIZE, SHUFFLE,
+    NUM_WORKERS, USE_DATA_AUG, BATCH_SIZE, SHUFFLE,
     IN_CH, OUT_CH, NUM_FILTERS, NUM_HEADS, USE_DROPOUT, DROPOUT_PROB,
     LR, BETAS, WEIGHT_DECAY, 
     SCHED_MIN_LR,
@@ -24,6 +24,7 @@ def main():
     print("starting train loop...")
 
     # hyperparameters
+    num_workers = NUM_WORKERS
     use_data_aug = USE_DATA_AUG
     batch_size = BATCH_SIZE
     shuffle = SHUFFLE
@@ -50,10 +51,11 @@ def main():
     mlflow.log_params(
         {
             "dataset": "BraTS2020",
+            "num_workers": num_workers,
             "data_augmentation": use_data_aug,
             "batch_size": batch_size,
             "shuffle": shuffle,
-            "model": "ResAtt3DUNet",
+            "model": "Att3DUNet",
             "in_channels": in_ch,
             "out_channels": out_ch,
             "num_filters": num_filters,
@@ -83,10 +85,17 @@ def main():
         data_augmentation=use_data_aug
     )
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=shuffle)
+    val_ds = npy_dataset(
+        os.path.join(data_dir, 'val', 'images'),
+        os.path.join(data_dir, 'val', 'masks'),
+        data_augmentation=False
+    )
+
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=shuffle, num_workers=num_workers, pin_memory=True)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, num_workers=num_workers, pin_memory=True)
 
     # model setup
-    model = ResAtt3DUNet(
+    model = Att3DUNet(
         in_channels=in_ch, out_channels=out_ch, num_filters=num_filters, num_heads=num_heads,
         dropout=use_dropout, dropout_probability=dropout_prob
     )
@@ -112,6 +121,8 @@ def main():
     os.makedirs('weights', exist_ok=True)
 
     # training loop
+    best_val_loss = float('inf')
+
     for epoch in range(1, num_epochs + 1):
         model.train()
 
@@ -133,20 +144,45 @@ def main():
             epoch_loss += loss.item()
             num_batches += 1
 
-        avg_loss = epoch_loss / num_batches
+        avg_train_loss = epoch_loss / num_batches
+
+        scheduler.step()
+
+        # validation
+        model.eval()
+        val_loss = 0
+        val_batches = 0
+
+        with torch.no_grad():
+            for image, true_mask in val_loader:
+                image, true_mask = image.to(device), true_mask.to(device)
+
+                with autocast(device_str):
+                    logits = model(image)
+                    loss = loss_fn(logits, true_mask)
+
+                val_loss += loss.item()
+                val_batches += 1
+
+        avg_val_loss = val_loss / val_batches
+
+        # save best model weights
+        if avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            torch.save(model.state_dict(), 'weights/best_weights.pt')
+
+        # print per-epoch metrics
+        print(f"epoch {epoch}, train_loss: {avg_train_loss:.4f}, val_loss: {avg_val_loss:.4f}, lr: {optimizer.param_groups[0]['lr']:.6f}")
 
         # log per-epoch metrics
         mlflow.log_metrics(
             {
-                "train_loss": avg_loss,
+                "train_loss": avg_train_loss,
+                "val_loss": avg_val_loss,
                 "scheduled_learning_rate": optimizer.param_groups[0]['lr']
             }, 
             step=epoch
         )
-
-        print(f"epoch {epoch}, loss: {avg_loss:.4f}, lr: {optimizer.param_groups[0]['lr']:.6f}")
-
-        scheduler.step()
 
         # log model periodically
         if epoch % log_every == 0:
@@ -157,6 +193,9 @@ def main():
     # save and log final model weights
     torch.save(model.state_dict(), 'weights/final_weights.pt')
     mlflow.log_artifact('weights/final_weights.pt')
+
+    # log best model weights
+    mlflow.log_artifact('weights/best_weights.pt')
 
     mlflow.end_run()
 

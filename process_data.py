@@ -1,11 +1,12 @@
 import os
 import glob
-import numpy as np
 import nibabel as nib
+import numpy as np
+from scipy.ndimage import zoom
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.model_selection import train_test_split
 
-from hyperparameters import TRAIN_SIZE, TEST_SIZE
+from hyperparameters import TRAIN_SIZE, VAL_SIZE, TEST_SIZE
 
 print("processing data...")
 
@@ -13,7 +14,7 @@ print("processing data...")
 data_dir = '/home/omkos333/projects/brainseg/data/raw' # base data directory
 save_dir = '/home/omkos333/projects/brainseg/data/processed' # new folder to save to
 
-for sub_path in ("train/images", "train/masks", "test/images", "test/masks"):
+for sub_path in ("train/images", "train/masks", "val/images", "val/masks", "test/images", "test/masks"):
     os.makedirs(os.path.join(save_dir, sub_path), exist_ok=True)
 
 # creating a list of all file paths for each MRI scan type and the corresponding masks
@@ -30,10 +31,15 @@ def to_one_hot(mask, num_classes):
         one_hot[..., c] = (mask == c).astype(np.uint8)
     return one_hot
 
-# train/test split
+# train/validation/test split
 N = len(flair_list)
-train_size, test_size = TRAIN_SIZE, TEST_SIZE
-train_idx, test_idx = train_test_split(np.arange(N), train_size=train_size, test_size=test_size, random_state=42)
+train_size, val_size, test_size = TRAIN_SIZE, VAL_SIZE, TEST_SIZE
+train_idx, test_idx = train_test_split(np.arange(N), train_size=train_size + val_size, test_size=test_size, random_state=42)
+train_idx, val_idx = train_test_split(train_idx, test_size=val_size / (train_size + val_size), random_state=42)
+
+# fast O(1) lookup with a set
+train_idx = set(train_idx)
+val_idx = set(val_idx)
 
 # data processing loop
 scaler = MinMaxScaler() # used to scale all voxels to [0, 1]
@@ -54,19 +60,24 @@ for image in range(N): # the length of all scan-specific filepath lists is the s
 
     stack = np.stack([flair, t1ce, t2], axis=3)
     
+    # hardcoded crop since all volumes are (240, 240, 155)
     stack = stack[56:184, 56:184, 13:141]
     mask = mask[56:184, 56:184, 13:141]
 
-    mask = to_one_hot(mask, num_classes=4)
+    stack = zoom(stack, (0.5, 0.5, 0.5, 1), order=1) # shrink cropped images to (64, 64, 64, 3)
+    mask = zoom(mask, (0.5, 0.5, 0.5), order=0) # shrink cropped masks to (64, 64, 64)
 
-    stack = stack[::2, ::2, ::2, ::] # shrink cropped images to (64, 64, 64, 3)
-    mask = mask[::2, ::2, ::2, ::] # shrink cropped masks to (64, 64, 64, 4)
+    mask = to_one_hot(mask, num_classes=4)
 
     stack = np.transpose(stack, (3, 0, 1, 2)) # channels first, (3, 64, 64, 64)
     mask = np.transpose(mask, (3, 0, 1, 2)) # (4, 64, 64, 64)
     
-    train_idx = set(train_idx) # fast O(1) lookup with a set
-    sub_path = "train" if image in train_idx else "test"
+    if image in train_idx:
+        sub_path = "train"
+    elif image in val_idx:
+        sub_path = "val"
+    else:
+        sub_path = "test"
 
     image_dir = os.path.join(save_dir, sub_path, "images")
     mask_dir = os.path.join(save_dir, sub_path, "masks")
