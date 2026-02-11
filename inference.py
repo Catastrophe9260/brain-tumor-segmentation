@@ -35,4 +35,4 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     if args.export:
-        export_to_onnx(in_ch, out_ch, num_filters, num_heads, "final_weights.pt", "brainseg.onnx")
+        export_to_onnx(in_ch, out_ch, num_filters, num_heads, "best_weights.pt", "brainseg.onnx")

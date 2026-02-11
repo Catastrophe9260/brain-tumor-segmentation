@@ -132,11 +132,12 @@ def main():
         for image, true_mask in train_loader:
             image, true_mask = image.to(device), true_mask.to(device)
 
+            optimizer.zero_grad()
+
             with autocast(device_str):
                 logits = model(image)
                 loss = loss_fn(logits, true_mask)
 
-            optimizer.zero_grad()
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()

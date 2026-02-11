@@ -58,8 +58,8 @@ def main():
 
     model.to(device)
 
-    model.load_state_dict(torch.load('best_weights.pt', map_location=device))
-    mlflow.log_artifact('best_weights.pt')
+    model.load_state_dict(torch.load('weights/best_weights.pt', map_location=device))
+    mlflow.log_artifact('weights/best_weights.pt')
 
     # define metrics
     dice_WT = DiceMetric(include_background=False, reduction="mean_batch")
